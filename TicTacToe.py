@@ -1,3 +1,5 @@
+import copy
+import math
 import sys
 import cv2
 import pygame
@@ -17,6 +19,8 @@ class Game:
         self.winner = None
         self.game_over = False
         self.draw_lines()
+        self.mode = "pvp"
+        self.ai = AI()
 
     def draw_lines(self):
         # 1 horizontal
@@ -54,10 +58,40 @@ class Game:
         self.game_over = False
         screen.fill( BG_COLOR )
         self.draw_lines()
+        self.ai.turn = False
 
 class Board:
     def __init__(self):
         self.board = np.zeros( (ROWS, COLS) )
+
+    def final_state(self):
+        if(self.check_win(1)):
+            return 1
+        elif(self.check_win(2)):
+            return 2
+        elif(self.is_full()):
+            return 3
+        else:
+            return 0
+    
+    def check_win(self, player):
+        # check horizontal
+        for i in range(ROWS):
+            if(self.board[i][0] == self.board[i][1] == self.board[i][2] == player):
+                return True
+
+        # check vertical
+        for i in range(COLS):
+            if(self.board[0][i] == self.board[1][i] == self.board[2][i] == player):
+                return True
+
+        # check diagonal
+        if(self.board[0][0] == self.board[1][1] == self.board[2][2] == player):
+            return True
+        if(self.board[0][2] == self.board[1][1] == self.board[2][0] == player):
+            return True
+
+        return False
 
 
     def highlight_square(self, x, y):
@@ -107,6 +141,21 @@ class Board:
     # check if the given square at given row and col is empty
     def is_empty(self, row, col):
         return self.board[row][col] == 0
+    
+    def is_full(self):
+        for i in range(ROWS):
+            for j in range(COLS):
+                if(self.board[i][j] == 0):
+                    return False
+        return True
+
+    def get_empty_squares(self):
+        empty_squares = []
+        for i in range(ROWS):
+            for j in range(COLS):
+                if(self.board[i][j] == 0):
+                    empty_squares.append((i, j))
+        return empty_squares
     
     # draw the given symbol at the given row and col
     def draw_figures(self, x, y, player):
@@ -159,6 +208,65 @@ class Board:
     def reset(self):
         self.board = np.zeros( (ROWS, COLS) )
 
+    def draw(self, row, col, player):
+        if(player == 1):
+            pygame.draw.circle(screen, CIRC_COLOR, (col*SQSIZE + SQSIZE//2, row*SQSIZE + SQSIZE//2), RADIUS, CIRC_WIDTH)
+        elif(player == 2):
+            pygame.draw.line(screen, CROSS_COLOR, (col*SQSIZE + OFFSET, row*SQSIZE + OFFSET), (col*SQSIZE + SQSIZE - OFFSET, row*SQSIZE + SQSIZE - OFFSET), CROSS_WIDTH)
+            pygame.draw.line(screen, CROSS_COLOR, (col*SQSIZE + OFFSET, row*SQSIZE + SQSIZE - OFFSET), (col*SQSIZE + SQSIZE - OFFSET, row*SQSIZE + OFFSET), CROSS_WIDTH)
+        self.board[row][col] = player
+
+    def mark(self, row, col, player):
+        self.board[row][col] = player
+
+class AI:
+    def __init__(self):
+        self.turn = False
+        self.player = 2
+
+    def minimax(self, board, maximizing):
+        
+        #base case
+        case = board.final_state()
+        if case == 1:
+            return -1, None
+        elif case == 2:
+            return 1, None
+        elif case == 3:
+            return 0, None
+        
+        if maximizing:
+            max_level = -math.inf
+            max_move = None
+            empty_squares = board.get_empty_squares()
+            for (row,col) in empty_squares:
+                temp_board = copy.deepcopy(board)
+                temp_board.mark(row, col, self.player)
+                score, _ = self.minimax(temp_board, False)
+                if score > max_level:
+                    max_level = score
+                    max_move = (row, col)
+            return max_level, max_move
+        else:
+            min_level = math.inf
+            min_move = None
+            empty_squares = board.get_empty_squares()
+            for (row,col) in empty_squares:
+                temp_board = copy.deepcopy(board)
+                temp_board.mark(row, col, 1)
+                score, _ = self.minimax(temp_board, True)
+                if score < min_level:
+                    min_level = score
+                    min_move = (row, col)
+            return min_level, min_move
+
+    
+    def eval(self, board):
+        eval, move = self.minimax(board, False)
+        return move
+    
+
+
 
 def main():
     # creating a game object
@@ -177,6 +285,13 @@ def main():
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_r:
                     game.reset()
+                    plays = 0
+                    player = 2
+                    
+                if event.key == pygame.K_a:
+                    game.mode = 'ai'
+                if event.key == pygame.K_p:
+                    game.mode = 'pvp'
 
             if not game.game_over:
                 # highlight the square that the mouse is hovering over
@@ -185,20 +300,47 @@ def main():
                     game.board.highlight_square(mouse_x, mouse_y)
 
                 # mark the square that the mouse clicked on
-                if event.type == pygame.MOUSEBUTTONDOWN:
-                    mouse_x, mouse_y = pygame.mouse.get_pos()
-                    if game.board.is_valid(mouse_x, mouse_y):
-                        game.board.draw_figures(mouse_x, mouse_y, player)
+                if player == 2 or not game.mode == 'ai':
+                    if event.type == pygame.MOUSEBUTTONDOWN:
+                        mouse_x, mouse_y = pygame.mouse.get_pos()
+                        if game.board.is_valid(mouse_x, mouse_y):
+                            game.ai.turn = True
+                            game.board.draw_figures(mouse_x, mouse_y, player)
+                            plays += 1
+                            if(plays >= 3):
+                                if(game.board.check_win(player)):
+                                    game.game_over = True
+                                    game.winner = player
+                                    game.display_winner()
+                                    plays = 0
+                                elif game.board.is_full():
+                                    game.game_over = True
+                                    game.winner = 0
+                                    game.display_winner()
+                                    plays = 0
+                    
+                        # switch player
+                        player = 2 if player == 1 else 1
+                        print (game.board.board)
+                else:
+                    if game.mode == 'ai' and game.ai.turn:
+                        move = game.ai.eval(game.board)
+                        game.board.draw(move[0], move[1], player)
                         plays += 1
                         if(plays >= 3):
                             if(game.board.check_win(player)):
                                 game.game_over = True
                                 game.winner = player
                                 game.display_winner()
-                    
-                    # switch player
-                    player = 2 if player == 1 else 1
-                    print (game.board.board)
+                                plays = 0
+                            elif game.board.is_full():
+                                    game.game_over = True
+                                    game.winner = 0
+                                    game.display_winner()
+                                    plays = 0
+                        player = 2 if player == 1 else 1
+                        game.ai.turn = False
+                        print (game.board.board)
             
         pygame.display.update()
 
